@@ -30,13 +30,8 @@ load_dotenv(ROOT / ".env", override=True)
 DB = Path(os.getenv('DATABASE_PATH', str(ROOT / 'search_ai_pro.db')))
 UPLOADS = ROOT / 'uploads'
 UPLOADS.mkdir(exist_ok=True)
-MODELS = {
-    "gemini-3.1-flash-lite",
-    "gemini-3.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.6-flash",
-    "gemini-3.8-flash"
-}
+from model_router import (MODELS, ECONOMY_MODEL, get_model_candidates,
+                          can_fallback, mark_unavailable)
 
 DEFAULT_MODEL = os.getenv(
     "GEMINI_MODEL",
@@ -433,12 +428,16 @@ def chat_stream(chat_id):
 
     inputs.append({'role': 'user', 'content': user_prompt})
 
-    model = settings["model"]
+    selected_model = settings["model"]
 
-    if model not in MODELS:
-        model = DEFAULT_MODEL
+    if selected_model not in MODELS:
+        selected_model = DEFAULT_MODEL
 
-    print(f"Selected model: {model}")
+    candidates = get_model_candidates(selected_model)
+    if not candidates:
+        return fail("All automatic models are cooling down. Try again later or select a model manually.", 503)
+
+    print(f"Selected mode: {selected_model}")
     print(f"Live web search: {search}")
 
     instructions = ('You are Search AI Pro, a helpful AI assistant. Provide accurate, clear and well-structured answers. Use Markdown formatting when helpful. Use headings for longer answers, bold text for important information, bullet points for lists, and Markdown tables for comparisons. Use fenced code blocks with language names for programming examples. Explain complex topics step by step using simple language. Keep short answers concise. When using web search, cite sources. '
@@ -456,6 +455,7 @@ def chat_stream(chat_id):
 
    
     def generate():
+        model = candidates[0]
         answer = ""
         sources = []
         input_tokens = 0
@@ -499,50 +499,65 @@ def chat_stream(chat_id):
                 )
                 for item in inputs
             ]
-            config = types.GenerateContentConfig(
-                system_instruction=instructions,
-                max_output_tokens=2048,
-                thinking_config=(
-                    types.ThinkingConfig(
-                        thinking_level="minimal"
+            for attempt, model in enumerate(candidates, 1):
+                print(f"Selected model: {model} (attempt {attempt})")
+                input_tokens = 0
+                output_tokens = 0
+                try:
+                    config = types.GenerateContentConfig(
+                        system_instruction=instructions,
+                        max_output_tokens=2048,
+                        thinking_config=(
+                            types.ThinkingConfig(
+                                thinking_level="minimal"
+                            )
+                            if model == "gemini-3.1-flash-lite"
+                            else None
+                        ),
+                        tools=None
                     )
-                    if model == "gemini-3.1-flash-lite"
-                    else None
-                ),
-                tools=None
-            )
 
-            stream = client.models.generate_content_stream(
-                model=model,
-                contents=contents,
-                config=config
-            )
-
-            for chunk in stream:
-                delta = chunk.text or ""
-
-                if delta:
-                    answer += delta
-                    yield emit("delta", {"text": delta})
-
-                for source in extract_sources(chunk):
-                    if not any(
-                        s["url"] == source["url"]
-                        for s in sources
-                    ):
-                        sources.append(source)
-
-                usage = getattr(chunk, "usage_metadata", None)
-
-                if usage:
-                    input_tokens = int(
-                        getattr(usage, "prompt_token_count", 0) or 0
+                    stream = client.models.generate_content_stream(
+                        model=model,
+                        contents=contents,
+                        config=config
                     )
-                    output_tokens = int(
-                        getattr(usage, "candidates_token_count", 0) or 0
-                    ) + int(
-                        getattr(usage, "thoughts_token_count", 0) or 0
-                    )
+
+                    for chunk in stream:
+                        delta = chunk.text or ""
+
+                        if delta:
+                            answer += delta
+                            yield emit("delta", {"text": delta})
+
+                        for source in extract_sources(chunk):
+                            if not any(
+                                s["url"] == source["url"]
+                                for s in sources
+                            ):
+                                sources.append(source)
+
+                        usage = getattr(chunk, "usage_metadata", None)
+
+                        if usage:
+                            input_tokens = int(
+                                getattr(usage, "prompt_token_count", 0) or 0
+                            )
+                            output_tokens = int(
+                                getattr(usage, "candidates_token_count", 0) or 0
+                            ) + int(
+                                getattr(usage, "thoughts_token_count", 0) or 0
+                            )
+                    if not answer.strip():
+                        raise RuntimeError("Model returned no text")
+                    break
+                except Exception as provider_error:
+                    if selected_model == "auto" and can_fallback(provider_error):
+                        mark_unavailable(model)
+                        if not answer and attempt < len(candidates):
+                            print(f"Auto fallback: {model} -> {candidates[attempt]}")
+                            continue
+                    raise
 
             estimated_cost = price(
                 model, input_tokens, output_tokens
@@ -579,6 +594,7 @@ def chat_stream(chat_id):
                 )
 
             yield emit("done", {
+                "model": model,
                 "sources": sources,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
