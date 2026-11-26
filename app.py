@@ -1088,6 +1088,16 @@ from github_tools.repository_routes import github_bp
 limiter.limit("10 per minute")(github_bp)
 
 app.register_blueprint(github_bp)
+# GITHUB_CHAT_UI_V1
+_ask_endpoint = 'github_repository.repository_ask'
+app.view_functions[_ask_endpoint] = csrf_required(
+    limiter.limit('3 per minute; 15 per hour')(app.view_functions[_ask_endpoint])
+)
+# GITHUB_AI_UI_V1
+_ai_endpoint = "github_repository.repository_ai_analysis"
+app.view_functions[_ai_endpoint] = csrf_required(
+    limiter.limit("3 per minute; 15 per hour")(app.view_functions[_ai_endpoint])
+)
 
 if __name__ == "__main__":
      app.run(

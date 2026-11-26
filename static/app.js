@@ -1072,20 +1072,124 @@ document.getElementById('kb-refresh').onclick=refreshKnowledgeBase;
 
 // GITHUB_UI_V1
 (function(){
- const el=$; let activeRepo='', working=false, epoch=0;
+ const el=$; let activeRepo='', working=false, epoch=0, originalFiles=[];
  const status=t=>el('gh-status').textContent=t;
  function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
- function clear(){activeRepo='';el('gh-summary').replaceChildren();el('gh-analysis').replaceChildren();el('gh-files').replaceChildren();el('gh-file-title').textContent='Source code';el('gh-code').textContent='Select a file to view its content.';}
+ function clear(){hideRepoChat();clearAI();activeRepo='';originalFiles=[];el('gh-summary').replaceChildren();el('gh-analysis').replaceChildren();el('gh-files').replaceChildren();el('gh-file-title').textContent='Source code';el('gh-code').textContent='Select a file to view its content.';}
  async function run(fn){if(working)return;working=true;const version=epoch;const controls=[...el('github-page').querySelectorAll('button,input,select')];controls.forEach(b=>b.disabled=true);status('Loading from GitHub…');try{await fn(version);}catch(e){if(version===epoch)status(e.message);}finally{working=false;controls.forEach(b=>b.disabled=false);}}
  const req=(route,params)=>api('/api/github/'+route+'?'+new URLSearchParams(params));
  function repo(){const r=el('gh-repo').value.trim();if(!r)throw Error('Enter a repository URL');return r;}
  function stats(d){const r=d.repository||{};const root=el('gh-summary');root.replaceChildren();for(const [label,value] of [['Repository',r.full_name],['Files',d.total_files],['Folders',d.total_folders],['Language',r.language||'Unknown'],['Stars',r.stars],['Size (KB)',Math.round((d.total_bytes||0)/1024)]]){const card=node('div',undefined,'gh-stat');card.append(node('small',label),node('strong',String(value??'—')));root.append(card);} }
  function files(rows){const root=el('gh-files');root.replaceChildren();if(!rows.length)root.append(node('p','No matching files.'));for(const f of rows){const b=node('button',f.path+(f.line?' : '+f.line:''),'gh-file');b.type='button';if(f.reason)b.title=f.reason;if(f.category)b.append(node('small',f.category,'gh-tag'));if(f.content)b.append(node('small',f.content,'gh-snippet'));b.onclick=()=>{if(f.type==='folder'){el('gh-query').value=f.path;el('gh-mode').value='filename';el('gh-search-form').requestSubmit();return;}run(async v=>{const d=await req('file',{repository:activeRepo,path:f.path});if(v!==epoch)return;el('gh-file-title').textContent=d.path;const code=node('code',d.content);el('gh-code').replaceChildren(code);status('File loaded · '+(d.lines??d.content.split('\n').length)+' lines');});};root.append(b);} }
  function analysis(d){const root=el('gh-analysis');root.replaceChildren();const cards=node('div',undefined,'gh-summary');const bar=node('div',undefined,'gh-bar');for(const [key,label] of [['useful','Useful'],['review','Needs review'],['unnecessary','Possibly unnecessary']]){const x=d.categories?.[key]||{};const pct=Math.max(0,Math.min(100,Number(x.file_percentage)||0));const card=node('div',undefined,'gh-stat gh-'+key);card.append(node('small',label),node('strong',pct+'%'),node('small',(x.files||0)+' files · '+(x.size_percentage||0)+'% of bytes'));cards.append(card);const seg=node('span',undefined,'gh-'+key);seg.style.width=pct+'%';bar.append(seg);}root.append(cards,bar,node('p','Duplicate groups: '+(d.duplicate_group_count||0)+' · Classification is heuristic; review before deleting.'));for(const g of (d.duplicate_groups||[]).slice(0,20)){const details=node('details');details.append(node('summary','Duplicate group · '+g.count+' files'));for(const p of g.files||[])details.append(node('div',typeof p==='string'?p:p.path));root.append(details);}const ext=node('details');ext.append(node('summary','File types'));for(const [k,v] of Object.entries(d.extensions||{}))ext.append(node('div',k+': '+(typeof v==='object'?JSON.stringify(v):v)));root.append(ext);}
- function load(analyze){run(async v=>{const r=repo();clear();const d=await req(analyze?'analyze':'repository',{repository:r});if(v!==epoch)return;activeRepo=r;stats(d);files(d.files||[]);if(analyze)analysis(d);status((d.truncated?'Partial repository listing · ':'')+(d.total_files||0)+' files loaded');});}
+ function load(analyze){run(async v=>{const r=repo();clear();const d=await req(analyze?'analyze':'repository',{repository:r});if(v!==epoch)return;activeRepo=r;originalFiles=d.files||[];stats(d);files(originalFiles);remember(d,r,analyze);if(analyze)analysis(d);status((d.truncated?'Partial repository listing · ':'')+(d.total_files||0)+' files loaded');});}
+
+ // GITHUB_HISTORY_V1
+ const historyKey=()=>{const email=el('user-email').textContent.trim().toLowerCase();return email?'search-ai.github.history.v1:'+email:null;};
+ function readHistory(){try{const k=historyKey();const a=k?JSON.parse(localStorage.getItem(k)||'[]'):[];return Array.isArray(a)?a:[];}catch(e){return [];}}
+ function saveHistory(a){try{const k=historyKey();if(!k)throw Error('Login required');localStorage.setItem(k,JSON.stringify(a));return true;}catch(e){toast('Repository history could not be saved');return false;}}
+ function remember(d,r,analyzed){const name=d.repository?.full_name;if(!name)return;const a=readHistory();const old=a.find(x=>x.name===name);saveHistory([{name,url:'https://github.com/'+name,date:new Date().toISOString(),analyzed:analyzed||!!old?.analyzed},...a.filter(x=>x.name!==name)].slice(0,50));renderHistory();}
+ function renderHistory(){const root=el('gh-history-list');root.replaceChildren();const a=readHistory();if(!a.length)root.append(node('p','No repository history yet.'));for(const x of a){const row=node('div',undefined,'gh-history-row');const info=node('div');info.append(node('strong',x.name),node('small',new Date(x.date).toLocaleString()+(x.analyzed?' · Analyzed':'')));const open=node('button','Reopen');open.type='button';open.onclick=()=>{if(working)return;el('gh-repo').value=x.url;load(!!x.analyzed);};const del=node('button','Delete');del.type='button';del.onclick=()=>{if(working)return;if(saveHistory(readHistory().filter(y=>y.name!==x.name)))renderHistory();};row.append(info,open,del);root.append(row);}}
+ function resetRepo(){if(working)return;clear();el('gh-repo').value='';el('gh-query').value='';el('gh-mode').value='filename';status('Enter a repository URL to begin.');}
+ el('gh-clear-repo').onclick=resetRepo;
+ el('gh-clear-search').onclick=()=>{if(working)return;el('gh-query').value='';el('gh-mode').value='filename';if(activeRepo)files(originalFiles);else el('gh-files').replaceChildren();status(activeRepo?'Search cleared · Repository files restored':'Enter a repository URL to begin.');};
+ el('gh-history-toggle').onclick=()=>{const p=el('gh-history-panel');p.hidden=!p.hidden;el('gh-history-toggle').setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden)renderHistory();};
+ el('gh-history-clear').onclick=()=>{if(!working&&confirm('Delete all saved repository history for this account?')){if(saveHistory([]))renderHistory();}};
+ el('logout').addEventListener('click',()=>{el('gh-history-list').replaceChildren();el('gh-history-panel').hidden=true;el('gh-history-toggle').setAttribute('aria-expanded','false');});
+ // GITHUB_AI_UI_V1
+ function clearAI(){el('gh-ai-panel').hidden=true;el('gh-ai-status').textContent='';el('gh-ai-meta').textContent='';el('gh-ai-files').replaceChildren();el('gh-ai-details').hidden=true;el('gh-ai-report').replaceChildren();delete el('gh-ai-report').dataset.raw;el('gh-ai-copy').disabled=true;}
+ el('gh-ai-clear').onclick=()=>{if(!working)clearAI();};
+ el('gh-ai-copy').onclick=async()=>{const raw=el('gh-ai-report').dataset.raw;if(!raw)return;try{await navigator.clipboard.writeText(raw);toast('Report copied');}catch(e){toast('Unable to copy report');}};
+ el('gh-repo').addEventListener('input',()=>{if(!working)clearAI();});
+ el('gh-ai-analyze').onclick=()=>{if(working)return;let r;try{r=repo();if(!r)throw Error('Enter a repository URL first');}catch(e){status(e.message);return;}if(!confirm('Send selected public repository source excerpts to Gemini for AI analysis? This uses API tokens.'))return;run(async v=>{clearAI();el('gh-ai-panel').hidden=false;el('gh-ai-status').textContent='Analyzing source code with Gemini…';el('gh-ai-analyze').classList.add('gh-ai-loading');status('AI analysis in progress…');try{const d=await api('/api/github/ai-analyze',json('POST',{repository:r}));if(v!==epoch)return;const reviewed=d.files_reviewed||[];el('gh-ai-meta').textContent=d.repository+' · '+d.model+' · '+reviewed.length+'/'+d.total_files+' listed files · Input: '+(d.input_tokens??'Unknown')+' · Output: '+(d.output_tokens??'Unknown')+' · Thinking: '+(d.thinking_tokens??'Not reported')+(d.truncated?' · Partial listing':'');for(const f of reviewed)el('gh-ai-files').append(node('li',f.path+' · '+f.characters+' characters'+(f.partial?' · Partial excerpt':'')));el('gh-ai-details').hidden=false;renderMarkdown(el('gh-ai-report'),d.report);el('gh-ai-copy').disabled=false;el('gh-ai-status').textContent='Analysis complete';status('AI analysis complete');}catch(e){if(v===epoch){el('gh-ai-status').textContent=e.message;status(e.message);}}finally{el('gh-ai-analyze').classList.remove('gh-ai-loading');}});};
+ // GITHUB_CHAT_UI_V1
+ const chatHistory=new Map();let chatRepo='';
+ function hideRepoChat(){chatRepo='';el('gh-chat-panel').hidden=true;el('gh-chat-messages').replaceChildren();el('gh-chat-question').value='';el('gh-chat-status').textContent='';}
+ function showRepoChat(){chatRepo=repo();el('gh-chat-panel').hidden=false;el('gh-chat-repo').textContent=chatRepo;drawRepoChat();}
+ function drawRepoChat(){const list=el('gh-chat-messages');list.replaceChildren();for(const item of chatHistory.get(chatRepo)||[]){const q=node('div',item.question);q.className='gh-chat-user';const answer=document.createElement('div');answer.className='gh-chat-answer';renderMarkdown(answer,item.data.answer);const details=document.createElement('details');details.append(node('summary','Reviewed files · '+item.data.model+' · Input: '+(item.data.input_tokens??'Unknown')+' · Output: '+(item.data.output_tokens??'Unknown')));const ul=document.createElement('ul');for(const f of item.data.files_reviewed||[])ul.append(node('li',f.path+' · line '+f.start_line+(f.partial?' · Partial excerpt':'')));details.append(ul);const copy=node('button','Copy response');copy.type='button';copy.onclick=async()=>{try{await navigator.clipboard.writeText(item.data.answer);toast('Copied');}catch(e){toast('Unable to copy');}};const retry=node('button','Regenerate');retry.type='button';retry.onclick=()=>askRepoChat(item.question,item);answer.append(details,copy,retry);list.append(q,answer);}list.scrollTop=list.scrollHeight;}
+ function askRepoChat(question,replaceItem=null){if(working)return;const r=chatRepo;if(!r||r!==el('gh-repo').value.trim()){status('Select Ask AI for this repository first');return;}question=question.trim();if(!question||question.length>2000)return;if(!confirm('Send question and selected public source excerpts to Gemini? This uses API tokens.'))return;run(async v=>{el('gh-chat-status').textContent='Generating answer…';el('gh-chat-question').disabled=true;try{const d=await api('/api/github/ask',json('POST',{repository:r,question}));if(v!==epoch||chatRepo!==r)return;const items=chatHistory.get(r)||[];const item={question,data:d};const i=items.indexOf(replaceItem);if(i>=0)items[i]=item;else items.push(item);chatHistory.set(r,items.slice(-20));if(chatHistory.size>20)chatHistory.delete(chatHistory.keys().next().value);el('gh-chat-question').value='';drawRepoChat();el('gh-chat-status').textContent='Answer complete';status('Repository answer complete');}catch(e){if(v===epoch&&chatRepo===r){el('gh-chat-status').textContent=e.message;status(e.message);}}finally{el('gh-chat-question').disabled=false;}});}
+ el('gh-ask').onclick=()=>{if(!working)try{showRepoChat();}catch(e){status(e.message);}};
+ el('gh-chat-form').onsubmit=e=>{e.preventDefault();askRepoChat(el('gh-chat-question').value);};
+ el('gh-chat-clear').onclick=()=>{if(!working&&confirm('Clear this repository chat?')){chatHistory.delete(chatRepo);drawRepoChat();el('gh-chat-status').textContent='';}};
+ for(const b of el('gh-chat-panel').querySelectorAll('[data-gh-question]'))b.onclick=()=>{el('gh-chat-question').value=b.dataset.ghQuestion;el('gh-chat-question').focus();};
+ el('gh-repo').addEventListener('input',hideRepoChat);el('gh-clear-repo').addEventListener('click',hideRepoChat);el('logout').addEventListener('click',()=>{chatHistory.clear();hideRepoChat();});
  el('github-tab').onclick=()=>showPage('github');el('gh-open-form').onsubmit=e=>{e.preventDefault();load(false);};el('gh-analyze').onclick=()=>load(true);
  el('gh-search-form').onsubmit=e=>{e.preventDefault();run(async v=>{if(!activeRepo||repo()!==activeRepo)throw Error('Open the repository first');const d=await req('search',{repository:activeRepo,query:el('gh-query').value.trim(),mode:el('gh-mode').value});if(v!==epoch)return;files(d.results||[]);status(d.total_results+' matches'+(d.limited?' · Search limit reached':'')+(d.truncated?' · Partial repository':''));});};
  el('logout').addEventListener('click',()=>{epoch++;clear();el('gh-repo').value='';el('gh-query').value='';status('Enter a repository URL to begin.');});
  const go=()=>{if(busy){toast('Stop the current response first');return;}newChat().catch(e=>toast(e.message));};
  for(const n of document.querySelectorAll('.sidebar .brand, header .search-ai-brand-logo, header #page-title')){n.classList.add('gh-brand-link');n.tabIndex=0;n.setAttribute('role','button');n.title='Start a new chat';n.addEventListener('click',go);n.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});}
+})();
+
+// ARCHITECTURE_UI_V1
+(function(){
+ const e=id=>document.getElementById(id);
+ let epoch=0, pending=false, source='', svg='';
+ const status=t=>e('gh-arch-status').textContent=t;
+ function clear(){epoch++;source='';svg='';e('gh-architecture-panel').hidden=true;e('gh-arch-diagram').replaceChildren();e('gh-arch-report').replaceChildren();e('gh-arch-files').replaceChildren();e('gh-arch-meta').textContent='';status('');e('gh-arch-copy').disabled=true;e('gh-arch-export').disabled=true;}
+ async function generate(){
+  if(pending)return;
+  const repository=e('gh-repo').value.trim();
+  if(!repository){toast('Enter a repository URL first');return;}
+  if(!confirm('Send sampled public source code to Gemini? This uses API tokens.'))return;
+  clear();const v=epoch;pending=true;e('gh-architecture').disabled=true;e('gh-arch-retry').disabled=true;e('gh-architecture-panel').hidden=false;status('Generating architecture...');
+  try{
+   const d=await api('/api/github/architecture',json('POST',{repository}));
+   if(v!==epoch)return;
+   e('gh-arch-meta').textContent=d.repository+' · '+d.model+' · Input: '+(d.input_tokens??'Unknown')+' · Output: '+(d.output_tokens??'Unknown');
+   for(const f of d.files_reviewed||[]){const li=document.createElement('li');li.textContent=f.path+' · line '+f.start_line;e('gh-arch-files').append(li);}
+   renderMarkdown(e('gh-arch-report'),String(d.report||'').replace(/```mermaid\s*\n[\s\S]*?```/gi,''));
+   source=String(d.diagram||'');e('gh-arch-diagram').dataset.pdfSource=source;
+   if(!source){status('Report ready; no valid diagram returned.');return;}
+   e('gh-arch-copy').disabled=false;
+   try{
+    if(!window.mermaid||!window.DOMPurify)throw Error('Diagram libraries unavailable');
+    const result=await mermaid.render('architecture-'+Date.now(),source);
+    if(v!==epoch)return;
+    svg=DOMPurify.sanitize(result.svg,{USE_PROFILES:{svg:true,svgFilters:true},FORBID_TAGS:['script','foreignObject','a','image'],FORBID_ATTR:['href','xlink:href']});
+    e('gh-arch-diagram').innerHTML=svg;e('gh-arch-export').disabled=false;status('Architecture complete');
+   }catch(err){if(v===epoch){const pre=document.createElement('pre');pre.textContent=source;e('gh-arch-diagram').replaceChildren(pre);status('Diagram rendering failed; Mermaid source available.');}}
+  }catch(err){if(v===epoch)status(err.message);}
+  finally{pending=false;e('gh-architecture').disabled=false;e('gh-arch-retry').disabled=false;}
+ }
+ e('gh-architecture').onclick=generate;e('gh-arch-retry').onclick=generate;e('gh-arch-clear').onclick=clear;
+ e('gh-arch-copy').onclick=()=>navigator.clipboard.writeText(source).then(()=>toast('Mermaid copied')).catch(()=>toast('Copy failed'));
+ e('gh-arch-export').onclick=()=>{if(!svg)return;const url=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml'}));const link=document.createElement('a');link.href=url;link.download='repository-architecture.svg';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+ for(const id of ['gh-clear-repo','logout'])e(id).addEventListener('click',clear);
+ e('gh-repo').addEventListener('input',clear);
+ e('gh-open-form').addEventListener('submit',clear);
+})();
+
+// REPOSITORY_PDF_V1
+(function(){
+ const e=id=>document.getElementById(id);
+ const button=e('gh-report-pdf');
+ const text=id=>e(id)?.textContent.trim()||'';
+ const key=s=>String(s||'').trim().replace(/^https:\/\/github\.com\//i,'').replace(/\/$/,'').replace(/\.git$/i,'').toLowerCase();
+ const safe=s=>String(s??'').replace(/[\r\n|]/g,' ').replace(/[<>]/g,'');
+ button.onclick=async()=>{
+  const repository=e('gh-repo').value.trim(), k=key(repository), sections=[];
+  if(!k){toast('Enter repository URL first');return;}
+  const cards=[...e('gh-summary').querySelectorAll('.gh-stat')];
+  if(cards.length && key(cards[0].querySelector('strong')?.textContent)===k){
+   let s='## Repository overview\n\n| Metric | Value |\n|---|---|\n';
+   for(const c of cards)s+='| '+safe(c.querySelector('small')?.textContent)+' | '+safe(c.querySelector('strong')?.textContent)+' |\n';
+   const a=e('gh-analysis');
+   if(a.textContent.trim()){
+    s+='\n## File classification\n\n| Category | Percentage | Details |\n|---|---|---|\n';
+    for(const c of a.querySelectorAll('.gh-stat')){const sm=c.querySelectorAll('small');s+='| '+safe(sm[0]?.textContent)+' | '+safe(c.querySelector('strong')?.textContent)+' | '+safe(sm[1]?.textContent)+' |\n';}
+    for(const p of a.querySelectorAll('p, details'))s+='\n'+p.innerText+'\n';
+   }
+   sections.push(s);
+  }
+  if(!e('gh-ai-panel').hidden && key(text('gh-ai-meta').split(' · ')[0])===k && e('gh-ai-report').dataset.raw){sections.push('## AI repository analysis\n\n'+text('gh-ai-meta')+'\n\n'+e('gh-ai-report').dataset.raw+'\n\nReviewed files:\n'+text('gh-ai-files'));}
+  if(!e('gh-architecture-panel').hidden && key(text('gh-arch-meta').split(' · ')[0])===k && e('gh-arch-report').dataset.raw){
+   let s='## Project architecture\n\n'+text('gh-arch-meta')+'\n\n'+e('gh-arch-report').dataset.raw+'\n\nReviewed files:\n'+text('gh-arch-files');
+   const diagram=e('gh-arch-diagram').dataset.pdfSource;
+   if(diagram && !e('gh-arch-copy').disabled)s+='\n\n```mermaid\n'+diagram+'\n```\n';
+   sections.push(s);
+  }
+  if(!sections.length){toast('Analyze this repository first');return;}
+  button.disabled=true;
+  try{const r=await fetch('/api/github/report.pdf',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({repository,sections})});if(!r.ok){const d=await r.json().catch(()=>({}));throw Error(d.error||'PDF export failed');}if(!r.headers.get('Content-Type')?.includes('application/pdf'))throw Error('PDF response expected');const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download='repository-report.pdf';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(err){toast(err.message);}finally{button.disabled=false;}
+ };
 })();

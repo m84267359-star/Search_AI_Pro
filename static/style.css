@@ -482,3 +482,49 @@ body.light .markdown-body a {
 
 /* GITHUB_UI_V1 */
 .brand{font-style:italic}.gh-brand-link{cursor:pointer}.sidebar{gap:12px}.side-bottom{gap:5px}.side-bottom button{border:1px solid var(--line);background:var(--panel);padding:9px 12px}.side-bottom button:hover,.side-bottom button.workspace-active{border-color:var(--accent);background:var(--hover)}.chat-item{border:1px solid transparent}.chat-item.active{border-color:var(--line)}.chat-list{min-height:60px}button{transition:background .18s,border-color .18s,transform .15s,box-shadow .18s}button:not(:disabled):active{transform:scale(.97)}button:focus-visible,.gh-brand-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.github-page{padding:28px clamp(16px,4vw,64px)}.gh-heading small{color:var(--accent);letter-spacing:2px;font-weight:700}.gh-heading h2{margin:8px 0}.gh-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0}.gh-toolbar input{flex:1;min-width:180px;width:auto}.gh-toolbar select{width:auto}.gh-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:12px;margin:16px 0}.gh-stat,.gh-pane{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0}.gh-stat small{display:block;color:var(--muted)}.gh-stat strong{display:block;font-size:21px;overflow-wrap:anywhere;margin:6px 0}.gh-useful strong{color:#22a76b}.gh-review strong{color:#c28b13}.gh-unnecessary strong{color:#e45d6b}.gh-bar{display:flex;height:10px;border-radius:8px;overflow:hidden;background:var(--line)}.gh-bar .gh-useful{background:#22a76b}.gh-bar .gh-review{background:#eab308}.gh-bar .gh-unnecessary{background:#e45d6b}.gh-browser{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,2fr);gap:14px}.gh-pane h3{margin-top:0;overflow-wrap:anywhere}#gh-files,#gh-code{max-height:55vh;overflow:auto}.gh-file{display:block;text-align:left;width:100%;border:0;border-bottom:1px solid var(--line);border-radius:0;overflow-wrap:anywhere;font-size:13px}.gh-tag,.gh-snippet{display:block;color:var(--muted);margin-top:4px}#gh-code{white-space:pre;line-height:1.6;font-size:13px;margin:0}#gh-analysis details{padding:8px;overflow-wrap:anywhere}#gh-status{font-size:13px}@media(max-width:780px){.gh-browser{grid-template-columns:1fr}.sidebar{overflow-y:auto}}@media(prefers-reduced-motion:reduce){button{transition:none!important;transform:none!important}}
+
+/* GITHUB_HISTORY_V1 */
+.gh-history-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.gh-history-actions h3{margin:0 auto 0 0}.gh-history-row{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid var(--line)}.gh-history-row>div{flex:1;min-width:0;overflow-wrap:anywhere}.gh-history-row small{display:block;color:var(--muted);margin-top:4px}#gh-history-panel[hidden]{display:none}#gh-history-list{max-height:320px;overflow:auto}#gh-clear-all,#gh-history-clear{color:#e45d6b}
+
+/* GITHUB_AI_UI_V1 */
+#gh-ai-panel{margin:18px 0;overflow-wrap:anywhere}#gh-ai-panel[hidden],#gh-ai-details[hidden]{display:none}#gh-ai-meta,#gh-ai-status{color:var(--muted);font-size:13px}#gh-ai-report{margin-top:18px;min-width:0;overflow:auto}#gh-ai-report table{width:100%}#gh-ai-analyze.gh-ai-loading{animation:gh-ai-pulse 1.3s ease-in-out infinite}@keyframes gh-ai-pulse{50%{opacity:.55}}@media(prefers-reduced-motion:reduce){#gh-ai-analyze.gh-ai-loading{animation:none}}
+
+/* GITHUB_CHAT_UI_V1 */
+#gh-chat-panel{margin:18px 0;min-width:0}#gh-chat-panel[hidden]{display:none}#gh-chat-messages{max-height:650px;overflow:auto;display:flex;flex-direction:column;gap:12px} .gh-chat-user{align-self:flex-end;background:#6854c9;color:white;padding:12px;border-radius:12px;max-width:85%;white-space:pre-wrap;overflow-wrap:anywhere}.gh-chat-answer{border:1px solid var(--border);padding:14px;border-radius:12px;overflow:auto;overflow-wrap:anywhere}.gh-chat-answer button{margin:8px 8px 0 0}#gh-chat-form{display:flex;gap:8px;align-items:center;margin-top:12px}#gh-chat-question{flex:1;min-width:0;resize:vertical}#gh-chat-status{font-size:13px}#gh-chat-panel .gh-history-actions{flex-wrap:wrap}
+
+/* ARCHITECTURE_UI_V1 */
+#gh-architecture-panel{margin:16px 0;min-width:0}#gh-arch-diagram{overflow:auto;padding:16px;background:#f8fafc;border-radius:12px}#gh-arch-diagram:empty{display:none}#gh-arch-diagram svg{display:block;max-width:100%;height:auto;margin:auto}#gh-arch-meta{overflow-wrap:anywhere}#gh-arch-report{overflow-wrap:anywhere}#gh-architecture-panel[hidden]{display:none!important}
+
+
+/* GITHUB_DASHBOARD_UI_V4 */
+#github-page { min-width:0; }
+#github-page #gh-open-form {
+ display:flex; flex-wrap:wrap; gap:10px; padding:18px;
+ border:1px solid rgba(128,128,160,.25); border-radius:14px;
+ background:rgba(128,128,160,.045);
+}
+#github-page #gh-repo { flex:0 0 100%; width:100%; min-width:0; box-sizing:border-box; min-height:48px; }
+#github-page #gh-open-form button { flex:1 1 auto; min-height:43px; border-radius:9px; font-weight:600; white-space:nowrap; }
+#github-page #gh-open-form button[type=submit] { background:#6654d9; color:white; }
+#github-page #gh-analyze { background:#245bb5; color:white; }
+#github-page #gh-ai-analyze { background:#7040c8; color:white; }
+#github-page #gh-ask { background:#03698a; color:white; }
+#github-page #gh-open-form button:nth-last-child(2) { background:#0f766e; color:white; }
+#github-page #gh-open-form button:last-child { background:#187348; color:white; }
+#github-page button { transition:transform .15s ease, filter .15s ease; }
+#github-page button:not(:disabled):hover { transform:translateY(-2px); filter:brightness(1.12); }
+#github-page button:not(:disabled):active { transform:scale(.97); }
+#github-page button:focus-visible { outline:2px solid #9584ff; outline-offset:3px; }
+#github-page button:disabled { opacity:.55; cursor:not-allowed; }
+#github-page #gh-status { padding:12px; border-left:3px solid #8270ef; border-radius:8px; background:rgba(128,128,160,.07); }
+#github-page .gh-history-actions { display:flex; flex-wrap:wrap; gap:10px; }
+#github-page #gh-search-form { display:flex; flex-wrap:wrap; gap:10px; padding:14px; border:1px solid rgba(128,128,160,.25); border-radius:12px; }
+#github-page #gh-query { flex:1 1 240px; min-width:0; }
+#github-page .gh-browser { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:14px; }
+#github-page .gh-browser > .gh-pane { min-width:0; min-height:240px; padding:18px; border-radius:14px; }
+#github-page .gh-browser h3 { padding-bottom:12px; border-bottom:1px solid rgba(128,128,160,.2); }
+#github-page #gh-files { max-height:550px; overflow:auto; }
+#github-page #gh-files:empty::after { content:'Open a repository to browse files.'; opacity:.7; font-size:14px; }
+#github-page #gh-code { max-height:600px; overflow:auto; padding:14px; border-radius:8px; background:rgba(128,128,160,.06); }
+@media(max-width:1000px) { #github-page .gh-browser { grid-template-columns:minmax(0,1fr); } #github-page #gh-open-form button { flex:1 1 140px; } }
+@media(prefers-reduced-motion:reduce) { #github-page button { transition:none; } #github-page button:not(:disabled):hover, #github-page button:not(:disabled):active { transform:none; } }
