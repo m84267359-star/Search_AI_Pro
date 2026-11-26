@@ -1,0 +1,171 @@
+﻿
+  app.py:469:    db().commit()
+  app.py:470:    return jsonify(ok=True)
+  app.py:471:
+  app.py:472:
+  app.py:473:# RAG_INTEGRATION_V1
+> app.py:474:def rag_enabled():
+> app.py:475:    return os.getenv('RAG_ENABLED', 'true').lower() == 'true'
+  app.py:476:
+  app.py:477:
+  app.py:478:def rag_reference(doc, question):
+  app.py:479:    fallback = doc['extracted_text'][:30000]
+> app.py:480:    if not rag_enabled():
+  app.py:481:        return fallback
+  app.py:482:    try:
+> app.py:483:        import rag_engine as rag
+  app.py:484:        import hashlib
+  app.py:485:        uid, did = int(doc['user_id']), int(doc['id'])
+  app.py:486:        fingerprint = hashlib.sha256(doc['extracted_text'].encode('utf-8')).hexdigest()
+  app.py:487:        collection = rag.get_collection(uid)
+  app.py:488:        existing = collection.get(where={'document_id': did}, include=['metadatas'])
+  app.py:489:        if not existing['ids'] or any(m.get('fingerprint') != fingerprint for m in 
+existing['metadatas']):
+> app.py:490:            rag.index_document(uid, did, doc['name'], doc['extracted_text'])
+  app.py:491:            existing = collection.get(where={'document_id': did}, include=['metadatas'])
+  app.py:492:            collection.update(ids=existing['ids'], metadatas=[{**m, 'fingerprint': 
+fingerprint} for m in existing['metadatas']])
+> app.py:493:        hits = rag.search_documents(uid, question, did)
+  app.py:494:        budget = max(100, min(1500, int(os.getenv('RAG_MAX_CONTEXT_TOKENS', '1500'))))
+  app.py:495:        tokenizer = rag.get_model().tokenizer
+  app.py:496:        blocks = []
+  app.py:497:        for hit in hits:
+  app.py:498:            meta = hit['metadata']
+  app.py:499:            block = f"[Document: {doc['name']}; chunk {meta['chunk']}]\n{hit['text']}"
+  app.py:500:            tokens = tokenizer.encode(block, add_special_tokens=False)
+  app.py:501:            if len(tokens) > budget:
+  app.py:502:                break
+  app.py:503:            blocks.append(block)
+  app.py:504:            budget -= len(tokens)
+  app.py:505:        if blocks:
+  app.py:506:            print('RAG retrieval successful:', len(blocks), 'chunks')
+  app.py:507:            return '\n\n'.join(blocks) + '\n\nCite relevant document and chunk labels. If 
+evidence is insufficient, say so.'
+  app.py:508:    except Exception:
+  app.py:547:    stored = secrets.token_hex(20) + suffix
+  app.py:548:    (UPLOADS / stored).write_bytes(data)
+  app.py:549:    cur = db().execute('INSERT INTO 
+documents(user_id,name,stored_name,extracted_text,created_at) VALUES (?,?,?,?,?)',
+  app.py:550:                       (current_user.id, name, stored, text, stamp()))
+  app.py:551:    db().commit()
+> app.py:552:    if rag_enabled():
+  app.py:553:        try:
+> app.py:554:            import rag_engine as rag
+  app.py:555:            import hashlib
+  app.py:556:            uid, did = int(current_user.id), int(cur.lastrowid)
+> app.py:557:            count = rag.index_document(uid, did, name, text)
+  app.py:558:            collection = rag.get_collection(uid)
+  app.py:559:            existing = collection.get(where={'document_id': did}, include=['metadatas'])
+  app.py:560:            fingerprint = hashlib.sha256(text.encode('utf-8')).hexdigest()
+  app.py:561:            collection.update(ids=existing['ids'], metadatas=[{**m, 'fingerprint': 
+fingerprint} for m in existing['metadatas']])
+  app.py:562:            print('RAG indexed:', count, 'chunks')
+  app.py:563:        except Exception:
+  app.py:564:            app.logger.exception('RAG indexing failed; document remains available')
+  app.py:565:    return jsonify(id=cur.lastrowid, name=name, chars=len(text)), 201
+  app.py:566:
+  app.py:567:
+  app.py:568:@app.get('/api/documents')
+  app.py:569:@login_required
+  app.py:570:def documents():
+  app.py:571:    rows = db().execute('SELECT id,name,created_at,length(extracted_text) chars FROM 
+documents WHERE user_id=? ORDER BY id DESC',
+  app.py:572:                        (current_user.id,)).fetchall()
+  app.py:579:def delete_document(doc_id):
+  app.py:580:    row = db().execute('SELECT * FROM documents WHERE id=? AND user_id=?', (doc_id, 
+current_user.id)).fetchone()
+  app.py:581:    if not row:
+  app.py:582:        abort(404)
+  app.py:583:    try:
+> app.py:584:        import rag_engine as rag
+  app.py:585:        rag.delete_document(int(current_user.id), doc_id)
+  app.py:586:    except Exception:
+  app.py:587:        app.logger.exception('RAG deletion failed')
+  app.py:588:        return fail('Could not remove document index. Please retry.', 503)
+  app.py:589:    db().execute('DELETE FROM documents WHERE id=?', (doc_id,))
+  app.py:590:    db().commit()
+  app.py:591:    (UPLOADS / row['stored_name']).unlink(missing_ok=True)
+  app.py:592:    return jsonify(ok=True)
+  app.py:593:
+  app.py:594:
+  app.py:595:def price(model, input_tokens, output_tokens):
+  app.py:596:    key = model.upper().replace('-', '_').replace('.', '_')
+  app.py:597:    a = float(os.getenv(f'PRICE_{key}_INPUT', '0'))
+  app.py:598:    b = float(os.getenv(f'PRICE_{key}_OUTPUT', '0'))
+  app.py:599:    return round((input_tokens * a + output_tokens * b) / 1_000_000, 8)
+> static\app.js:22:async function send(){if(busy)return;const 
+text=$('prompt').value.trim()||(pendingImageData?'Describe this 
+image.':'');if(!text)return;busy=true;$('chat-model').disabled=true;
+  static\app.js:23:generationController = new AbortController();
+> static\app.js:24:setGenerating(true);let 
+retryInfo=null,retryOut=null,retryFailed=false;try{if(!chatId)await newChat();if($('messages').querySele
+ctor('.empty'))$('messages').replaceChildren();addMessage('user',text);$('prompt').value='';const out=ad
+dMessage('assistant','');retryOut=out;retryInfo={chat:chatId,text,model:$('chat-model').value,search:$('
+web-search').value,document:$('document-select').value};let raw='',done=false;const r=await fetch('/api/
+chats/'+chatId+'/stream',{signal:generationController.signal,method:'POST',headers:{'Content-Type':'appl
+ication/json','X-CSRF-Token':csrf},body:JSON.stringify({message:text,image_data:pendingImageData,model:$
+('chat-model').value,search_mode:$('web-search').value,document_id:$('document-select').value||null})});
+if(!r.ok){const d=await r.json();throw Error(d.error||'Request failed')}clearPendingImage();const 
+reader=r.body.getReader();const decoder=new TextDecoder();while(true){const {value,done:ended}=await 
+reader.read();raw+=decoder.decode(value||new Uint8Array(),{stream:!ended});const 
+cut=raw.lastIndexOf('\n\n');if(cut>=0){const completed=raw.slice(0,cut+2);raw=raw.slice(cut+2);parseSSE(
+completed,(event,d)=>{if(event==='delta'){renderMarkdown(out.content,(out.content.dataset.raw||'')+d.tex
+t);$('messages').scrollTop=$('messages').scrollHeight}if(event==='error'){renderMarkdown(out.content,(ou
+t.content.dataset.raw||'')+'\n\nError: '+d.error);toast(d.error)}if(event==='done'){done=true;const 
+links=document.createElement('div');links.className='sources';for(const s of 
+d.sources||[]){if(!/^https?:\/\//.test(s.url))continue;const 
+a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s
+.title||s.url;links.append(a)}out.div.append(links)}})}if(ended)break}if(!done){retryFailed=true;toast('
+Stream ended before completion');}await refreshChats()}catch(e){
+  static\app.js:25:    if(e.name === 'AbortError'){
+  static\app.js:26:        toast('Generation stopped');
+  static\app.js:27:    }else{
+> static\app.js:43:async function refreshDocs(){docs=await api('/api/documents');const 
+sel=$('document-select');const selected=sel.value;sel.replaceChildren(new Option('No document 
+selected',''));const list=$('document-list');list.replaceChildren();for(const d of docs){sel.add(new 
+Option(d.name,d.id));const row=document.createElement('div');row.className='doc-row';const 
+title=document.createElement('span');title.textContent='📄 '+d.name+' ('+d.chars+' characters)';const 
+del=document.createElement('button');del.textContent='Delete';del.onclick=async()=>{if(!confirm('Delete 
+document?'))return;await api('/api/documents/'+d.id,{method:'DELETE'});refreshDocs()};row.append(title,d
+el);list.append(row)}sel.value=selected;if(!sel.value)sel.value=''}
+  static\app.js:44:$('upload-btn').onclick=async()=>{const f=$('upload').files[0];if(!f)return 
+toast('Select a file');const body=new FormData();body.append('file',f);try{await 
+api('/api/documents',{method:'POST',body});$('upload').value='';await refreshDocs();toast('Document 
+uploaded')}catch(e){toast(e.message)}};
+  static\app.js:45:function statCard(label,value){const 
+d=document.createElement('div');d.className='stat';const 
+b=document.createElement('b');b.textContent=value;const 
+s=document.createElement('span');s.textContent=label;d.append(b,s);return d}
+  static\app.js:46:$('usage-tab').onclick=async()=>{showPage('usage');const u=await 
+api('/api/usage');$('usage-stats').replaceChildren(statCard('AI requests',u.requests),statCard('Your 
+chats',u.chats),statCard('Input tokens',u.input_tokens),statCard('Output 
+tokens',u.output_tokens),statCard('Estimated token cost','$'+Number(u.cost).toFixed(5)))};
+> static\app.js:983:      for(const [id,value] of 
+[['chat-model',info.model],['web-search',info.search],['document-select',info.document]]){
+  static\app.js:984:        if(![...$(id).options].some(o=>o.value===value))throw Error('Original 
+request option is no longer available');
+  static\app.js:985:        $(id).value=value;
+  static\app.js:986:      }
+templates\index.html:18:<main><header><button id="menu" aria-label="Toggle sidebar">☰</button><div><b 
+id="page-title">New conversation</b><small>Search, reason and explore with AI</small></div><div 
+class="user-pill" id="user-email"></div></header><section id="chat-page" class="page"><div 
+id="messages" class="messages"><div class="empty"><div class="sparkle">✦</div><h1>What can I help you 
+discover?</h1><p>Ask anything, search the web, or analyze a document.</p><div 
+class="suggestions"><button data-prompt="What are the latest AI trends?">Latest AI 
+trends</button><button data-prompt="Explain Flask vs FastAPI with examples">Flask vs 
+FastAPI</button><button data-prompt="Help me plan an AI automation project">AI project 
+ideas</button></div></div></div><div class="composer"><div class="composer-tools"><label>Web search 
+<select id="web-search"><option value="auto">Auto</option><option value="always">Always 
+On</option><option value="off">Off</option></select></label><select id="document-select"><option 
+value="">No document selected</option></select></div><div class="compose-row"><textarea id="prompt" 
+rows="2" maxlength="8000" placeholder="Ask Search AI Pro... (Enter to send)"></textarea><button 
+id="voice" title="Voice search">🎙</button><button id="send" class="primary">➤</button></div><small>AI 
+can make mistakes. Verify important information and sources.</small></div></section>
+templates\index.html:19:<section id="documents-page" class="page panel" hidden><h2>Document 
+intelligence</h2><p>Upload a PDF, TXT or Markdown file and select it in chat to ask questions about its 
+content.</p><input id="upload" type="file" accept=".pdf,.txt,.md"><button id="upload-btn" 
+class="primary">Upload document</button><div id="document-list"></div><p class="hint">PDF: up to 50 
+pages, 10 MB. Text-based PDFs only. Extracted text is limited to 120,000 characters and 30,000 
+characters per AI question.</p></section>
+
+

@@ -3,8 +3,8 @@ let chatId=null,registerMode=false,busy=false,settings=null,docs=[];
 function toast(msg){$('toast').textContent=msg;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',3500)}
 async function api(url,opts={}){const r=await fetch(url,{credentials:'same-origin',...opts,headers:{'X-CSRF-Token':csrf,...(opts.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(opts.headers||{})}});let d=await r.json().catch(()=>({error:'Unexpected response'}));if(!r.ok)throw Error(d.error||'Request failed');return d}
 const json=(method,body)=>({method,body:JSON.stringify(body)});
-function showPage(name){for(const p of ['chat','documents','usage','settings','admin'])$(p+'-page').hidden=p!==name;$('page-title').textContent=({chat:'AI Search',documents:'Document intelligence',usage:'Usage dashboard',settings:'Settings',admin:'Admin dashboard'})[name];document.querySelector('.sidebar').classList.remove('open')}
-async function init(){const me=await api('/api/me');$('auth').hidden=me.authenticated;$('workspace').hidden=!me.authenticated;if(!me.authenticated)return;$('user-email').textContent=me.email;$('admin-tab').hidden=!me.admin;settings=await api('/api/settings');$('model').innerHTML=settings.models.map(m=>`<option value="${m}">${m}</option>`).join('');$('model').value=settings.model;$('theme').value=settings.theme;$('instructions').value=settings.instructions;applyTheme(settings.theme);await Promise.all([refreshChats(),refreshDocs()]);showPage('chat')}
+function showPage(name){for(const p of ['chat','documents','usage','settings','admin','github'])$(p+'-page').hidden=p!==name;$('page-title').textContent=({chat:'AI Search',documents:'Document intelligence',usage:'Usage dashboard',settings:'Settings',admin:'Admin dashboard',github:'GitHub Repository'})[name];document.querySelector('.sidebar').classList.remove('open');document.querySelectorAll('.side-bottom button').forEach(b=>b.classList.toggle('workspace-active',b.id===name+'-tab'))}
+async function init(){const me=await api('/api/me');$('auth').hidden=me.authenticated;$('workspace').hidden=!me.authenticated;if(!me.authenticated)return;$('user-email').textContent=me.email;$('admin-tab').hidden=!me.admin;settings=await api('/api/settings');$('model').innerHTML=settings.models.map(m=>`<option value="${m}">${m}</option>`).join('');$('model').value=settings.model;initChatModelSelector(settings);$('theme').value=settings.theme;$('instructions').value=settings.instructions;applyTheme(settings.theme);await Promise.all([refreshChats(),refreshDocs()]);showPage('chat')}
 $('toggle-auth').onclick=()=>{registerMode=!registerMode;$('auth-title').textContent=registerMode?'Create your account':'Welcome back';$('auth-submit').textContent=registerMode?'Register':'Sign in';$('toggle-auth').textContent=registerMode?'Already registered? Sign in':'Create an account';$('auth-error').textContent=''};
 $('auth-form').onsubmit=async e=>{e.preventDefault();try{await api(registerMode?'/api/register':'/api/login',json('POST',{email:$('email').value,password:$('password').value}));$('password').value='';await init()}catch(err){$('auth-error').textContent=err.message}};
 $('logout').onclick=async()=>{await api('/api/logout',json('POST',{}));chatId=null;await init()};
@@ -19,18 +19,18 @@ function parseSSE(raw,onEvent){const blocks=raw.replace(/\r/g,'').split('\n\n');
 // STOP_GENERATION_V1
 let generationController = null;
 
-async function send(){if(busy)return;const text=$('prompt').value.trim();if(!text)return;busy=true;
+async function send(){if(busy)return;const text=$('prompt').value.trim()||(pendingImageData?'Describe this image.':'');if(!text)return;busy=true;$('chat-model').disabled=true;
 generationController = new AbortController();
-setGenerating(true);try{if(!chatId)await newChat();if($('messages').querySelector('.empty'))$('messages').replaceChildren();addMessage('user',text);$('prompt').value='';const out=addMessage('assistant','');let raw='',done=false;const r=await fetch('/api/chats/'+chatId+'/stream',{signal:generationController.signal,method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({message:text,web_search:$('web-search').checked,document_id:$('document-select').value||null})});if(!r.ok){const d=await r.json();throw Error(d.error||'Request failed')}const reader=r.body.getReader();const decoder=new TextDecoder();while(true){const {value,done:ended}=await reader.read();raw+=decoder.decode(value||new Uint8Array(),{stream:!ended});const cut=raw.lastIndexOf('\n\n');if(cut>=0){const completed=raw.slice(0,cut+2);raw=raw.slice(cut+2);parseSSE(completed,(event,d)=>{if(event==='delta'){renderMarkdown(out.content,(out.content.dataset.raw||'')+d.text);$('messages').scrollTop=$('messages').scrollHeight}if(event==='error'){renderMarkdown(out.content,(out.content.dataset.raw||'')+'\n\nError: '+d.error);toast(d.error)}if(event==='done'){done=true;const links=document.createElement('div');links.className='sources';for(const s of d.sources||[]){if(!/^https?:\/\//.test(s.url))continue;const a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s.title||s.url;links.append(a)}out.div.append(links)}})}if(ended)break}if(!done)toast('Stream ended before completion');await refreshChats()}catch(e){
+setGenerating(true);let retryInfo=null,retryOut=null,retryFailed=false;try{if(!chatId)await newChat();if($('messages').querySelector('.empty'))$('messages').replaceChildren();addMessage('user',text);$('prompt').value='';const out=addMessage('assistant','');retryOut=out;retryInfo={chat:chatId,text,model:$('chat-model').value,search:$('web-search').value,document:$('document-select').value};let raw='',done=false;const r=await fetch('/api/chats/'+chatId+'/stream',{signal:generationController.signal,method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({message:text,image_data:pendingImageData,model:$('chat-model').value,search_mode:$('web-search').value,document_id:$('document-select').value||null})});if(!r.ok){const d=await r.json();throw Error(d.error||'Request failed')}clearPendingImage();const reader=r.body.getReader();const decoder=new TextDecoder();while(true){const {value,done:ended}=await reader.read();raw+=decoder.decode(value||new Uint8Array(),{stream:!ended});const cut=raw.lastIndexOf('\n\n');if(cut>=0){const completed=raw.slice(0,cut+2);raw=raw.slice(cut+2);parseSSE(completed,(event,d)=>{if(event==='delta'){renderMarkdown(out.content,(out.content.dataset.raw||'')+d.text);$('messages').scrollTop=$('messages').scrollHeight}if(event==='error'){renderMarkdown(out.content,(out.content.dataset.raw||'')+'\n\nError: '+d.error);toast(d.error)}if(event==='done'){done=true;const links=document.createElement('div');links.className='sources';for(const s of d.sources||[]){if(!/^https?:\/\//.test(s.url))continue;const a=document.createElement('a');a.href=s.url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=s.title||s.url;links.append(a)}out.div.append(links)}})}if(ended)break}if(!done){retryFailed=true;toast('Stream ended before completion');}await refreshChats()}catch(e){
     if(e.name === 'AbortError'){
         toast('Generation stopped');
     }else{
-        toast(e.message);
+        retryFailed=true;toast(e.message);
     }
 }finally{
-    busy=false;
+    busy=false;$('chat-model').disabled=false;
     generationController=null;
-    setGenerating(false);
+    setGenerating(false);if(retryFailed&&retryInfo&&retryOut)attachRetry(retryOut.div,retryInfo);
 }}
 $('send').onclick=()=>{
     if(busy){
@@ -40,7 +40,7 @@ $('send').onclick=()=>{
     }
 };$('prompt').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}};
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{$('prompt').value=b.dataset.prompt;send()});
-async function refreshDocs(){docs=await api('/api/documents');const sel=$('document-select');const selected=sel.value;sel.replaceChildren(new Option('No document selected',''));const list=$('document-list');list.replaceChildren();for(const d of docs){sel.add(new Option(d.name,d.id));const row=document.createElement('div');row.className='doc-row';const title=document.createElement('span');title.textContent='📄 '+d.name+' ('+d.chars+' characters)';const del=document.createElement('button');del.textContent='Delete';del.onclick=async()=>{if(!confirm('Delete document?'))return;await api('/api/documents/'+d.id,{method:'DELETE'});refreshDocs()};row.append(title,del);list.append(row)}sel.value=selected;if(!sel.value)sel.value=''}
+async function refreshDocs(){docs=await api('/api/documents');const sel=$('document-select');const selected=sel.value;sel.replaceChildren(new Option('General AI Chat',''),new Option('All my documents','all'));const list=$('document-list');list.replaceChildren();for(const d of docs){sel.add(new Option(d.name,d.id));const row=document.createElement('div');row.className='doc-row';const title=document.createElement('span');title.textContent='📄 '+d.name+' ('+d.chars+' characters)';const del=document.createElement('button');del.textContent='Delete';del.onclick=async()=>{if(!confirm('Delete document?'))return;await api('/api/documents/'+d.id,{method:'DELETE'});refreshDocs()};row.append(title,del);list.append(row)}sel.value=selected;if(!sel.value)sel.value=''}
 $('upload-btn').onclick=async()=>{const f=$('upload').files[0];if(!f)return toast('Select a file');const body=new FormData();body.append('file',f);try{await api('/api/documents',{method:'POST',body});$('upload').value='';await refreshDocs();toast('Document uploaded')}catch(e){toast(e.message)}};
 function statCard(label,value){const d=document.createElement('div');d.className='stat';const b=document.createElement('b');b.textContent=value;const s=document.createElement('span');s.textContent=label;d.append(b,s);return d}
 $('usage-tab').onclick=async()=>{showPage('usage');const u=await api('/api/usage');$('usage-stats').replaceChildren(statCard('AI requests',u.requests),statCard('Your chats',u.chats),statCard('Input tokens',u.input_tokens),statCard('Output tokens',u.output_tokens),statCard('Estimated token cost','$'+Number(u.cost).toFixed(5)))};
@@ -860,4 +860,232 @@ const source = code.textContent.trim()
 
     addCopyPromptButtons();
 
+})();
+
+// CHAT_MODEL_SELECTOR_V1
+function initChatModelSelector(config){
+    let select = document.getElementById('chat-model');
+    if(!select){
+        select=document.createElement('select');
+        select.id='chat-model';
+        select.setAttribute('aria-label','AI model for this message');
+        select.title='AI model for this message';
+        document.querySelector('.composer-tools').append(select);
+    }
+    const labels={auto:'Auto - Token Efficient'};
+    select.replaceChildren();
+    for(const model of config.models){
+        const option=document.createElement('option');
+        option.value=model;
+        option.textContent=labels[model]||model;
+        select.append(option);
+    }
+    select.value=config.model;
+    select.disabled=busy;
+}
+
+// EDIT_PROMPT_V1
+(function(){
+  function attach(){
+    document.querySelectorAll('#messages .message.user').forEach(message=>{
+      if(message.querySelector('.edit-prompt-btn'))return;
+      const content=message.querySelector('.message-content');
+      if(!content)return;
+      const button=document.createElement('button');
+      button.type='button';button.className='edit-prompt-btn';button.textContent='✎ Edit prompt';
+      button.onclick=async()=>{
+        if(busy||!chatId||message.querySelector('.edit-prompt-form'))return;
+        const originalChat=chatId;
+        const form=document.createElement('div');form.className='edit-prompt-form';
+        const field=document.createElement('textarea');field.value=content.textContent;field.maxLength=8000;
+        const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';
+        const save=document.createElement('button');save.type='button';save.textContent='Save & Submit';
+        form.append(field,cancel,save);message.append(form);content.hidden=true;button.hidden=true;field.focus();
+        cancel.onclick=()=>{form.remove();content.hidden=false;button.hidden=false;};
+        save.onclick=async()=>{
+          const text=field.value.trim();if(!text||busy||chatId!==originalChat)return;
+          save.disabled=true;cancel.disabled=true;
+          try{
+            const data=await api('/api/chats/'+originalChat);
+            if(busy||chatId!==originalChat)throw Error('Conversation changed. Please retry.');
+            const visible=[...document.querySelectorAll('#messages .message.user')];
+            const stored=data.messages.filter(m=>m.role==='user');
+            const index=visible.indexOf(message);
+            if(index<0||visible.length!==stored.length||!visible.every((m,i)=>m.querySelector('.message-content')?.textContent===stored[i].content))throw Error('Refresh the conversation before editing.');
+            const response=await fetch('/api/chats/'+originalChat+'/branch',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({message_id:stored[index].id})});
+            if(!response.ok)throw Error('Could not create edited conversation');
+            const branch=await response.json();
+            if(busy||chatId!==originalChat)throw Error('Edited conversation created. Open it from the sidebar.');
+            await openChat(branch.id);
+            if(chatId!==branch.id||busy)throw Error('Open the edited conversation to continue.');
+            $('prompt').value=text;await send();
+          }catch(e){toast(e.message);save.disabled=false;cancel.disabled=false;}
+        };
+      };
+      message.append(button);
+    });
+  }
+  const root=$('messages');if(root){new MutationObserver(attach).observe(root,{childList:true,subtree:true});attach();}
+})();
+
+// REGENERATE_RESPONSE_V1
+(function(){
+  let pending=false;
+  function attach(){
+    document.querySelectorAll('#messages .message.assistant').forEach(message=>{
+      if(message.querySelector('.regenerate-btn'))return;
+      const button=document.createElement('button');
+      button.type='button';button.className='regenerate-btn';button.textContent='↻ Regenerate';
+      button.onclick=async()=>{
+        if(busy||pending||!chatId){toast('Wait for the current response to finish');return;}
+        if($('prompt').value.trim()){toast('Clear or save your draft before regenerating');return;}
+        const original=chatId;pending=true;button.disabled=true;
+        try{
+          const data=await api('/api/chats/'+original);
+          if(busy||chatId!==original)throw Error('Conversation changed. Please retry.');
+          const visible=[...document.querySelectorAll('#messages .message')];
+          const index=visible.indexOf(message);
+          if(index<1||visible.length!==data.messages.length||!visible.every((m,i)=>m.classList.contains(data.messages[i].role)&&(m.querySelector('.message-content')?.dataset.raw||m.querySelector('.message-content')?.textContent)===data.messages[i].content))throw Error('Refresh this conversation before regenerating.');
+          const target=data.messages[index-1];
+          if(data.messages[index].role!=='assistant'||target.role!=='user')throw Error('Original prompt not found');
+          const response=await fetch('/api/chats/'+original+'/branch',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({message_id:target.id})});
+          if(!response.ok)throw Error('Could not create conversation branch');
+          const branch=await response.json();
+          if(busy||chatId!==original||$('prompt').value.trim())throw Error('Branch created. Open it from the sidebar.');
+          await openChat(branch.id);
+          if(busy||chatId!==branch.id||$('prompt').value.trim())throw Error('Open the new conversation to continue.');
+          $('prompt').value=target.content;await send();
+        }catch(e){toast(e.message);}finally{pending=false;button.disabled=false;}
+      };
+      message.append(button);
+    });
+  }
+  const root=$('messages');if(root){new MutationObserver(attach).observe(root,{childList:true,subtree:true});attach();}
+})();
+
+// RETRY_RESPONSE_V1
+function attachRetry(message, info){
+  const button=document.createElement('button');button.type='button';button.className='retry-response-btn';button.textContent='Retry response';
+  button.onclick=async()=>{
+    if(busy||chatId!==info.chat||$('prompt').value.trim()){toast('Open the failed conversation and clear your draft first');return;}
+    button.disabled=true;
+    try{
+      const data=await api('/api/chats/'+info.chat);
+      if(busy||chatId!==info.chat)throw Error('Conversation changed');
+      const last=data.messages.at(-1);
+      if(!last||last.role!=='user'||last.content!==info.text)throw Error('Failed prompt is not the last saved message. Refresh the conversation before retrying.');
+      const r=await fetch('/api/chats/'+info.chat+'/branch',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({message_id:last.id})});
+      if(!r.ok)throw Error('Could not create retry conversation');
+      const branch=await r.json();
+      if(busy||chatId!==info.chat||$('prompt').value.trim())throw Error('Retry branch created. Open it from the sidebar.');
+      await openChat(branch.id);
+      if(busy||chatId!==branch.id||$('prompt').value.trim())throw Error('Open the retry conversation to continue');
+      for(const [id,value] of [['chat-model',info.model],['web-search',info.search],['document-select',info.document]]){
+        if(![...$(id).options].some(o=>o.value===value))throw Error('Original request option is no longer available');
+        $(id).value=value;
+      }
+      $('prompt').value=info.text;await send();
+    }catch(e){toast(e.message);}finally{button.disabled=false;}
+  };message.append(button);
+}
+
+// IMAGE_UPLOAD_V1
+let pendingImageData = null;
+let imageReadVersion = 0;
+let imagePreview = null;
+function clearPendingImage(){
+    imageReadVersion++;
+    pendingImageData=null;
+    if(imagePreview) imagePreview.replaceChildren();
+    const picker=document.getElementById('image-picker');
+    if(picker) picker.value='';
+}
+(function installImagePicker(){
+    const tools=document.querySelector('.composer-tools');
+    if(!tools)return;
+    const picker=document.createElement('input');
+    picker.type='file'; picker.id='image-picker'; picker.accept='image/png,image/jpeg,image/webp'; picker.hidden=true;
+    const button=document.createElement('button'); button.type='button'; button.className='image-attach-btn'; button.textContent='Attach image';
+    button.onclick=()=>{if(!busy)picker.click();};
+    imagePreview=document.createElement('div'); imagePreview.className='image-upload-preview';
+    tools.append(button,picker); tools.parentNode.insertBefore(imagePreview,tools);
+    picker.onchange=()=>{
+        if(busy)return;
+        const file=picker.files[0]; clearPendingImage();
+        if(!file)return;
+        if(!['image/png','image/jpeg','image/webp'].includes(file.type)||file.size>5*1024*1024){toast('Choose PNG, JPEG or WEBP up to 5 MB');return;}
+        const version=imageReadVersion;
+        const reader=new FileReader();
+        reader.onerror=()=>toast('Unable to read image');
+        reader.onload=()=>{
+            if(version!==imageReadVersion||busy)return;
+            const url=String(reader.result);
+            pendingImageData=url.split(',')[1];
+            const img=document.createElement('img'); img.src=url; img.alt='Selected image';
+            const name=document.createElement('span'); name.textContent=file.name;
+            const remove=document.createElement('button'); remove.type='button'; remove.textContent='Remove'; remove.onclick=()=>{if(!busy)clearPendingImage();};
+            imagePreview.replaceChildren(img,name,remove);
+        };
+        reader.readAsDataURL(file);
+    };
+})();
+
+// AI_MEMORY_V1
+(function(){
+ const el=id=>document.getElementById(id);
+ async function req(path,method='GET',data){
+   const r=await fetch('/api/memory'+path,{method,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},...(data===undefined?{}:{body:JSON.stringify(data)})});
+   const d=await r.json(); if(!r.ok)throw Error(d.error||'Memory request failed'); return d;
+ }
+ async function load(){
+   const d=await req(''); el('memory-enabled').checked=d.enabled; el('memory-add').disabled=!d.enabled;
+   const list=el('memory-list'); list.replaceChildren();
+   for(const m of d.memories){const row=document.createElement('div'); const t=document.createElement('textarea');t.value=m.content;t.maxLength=500;t.rows=2;row.append(t);
+     for(const [label,fn] of [['Save',()=>req('/'+m.id,'PATCH',{content:t.value})],['Delete',()=>req('/'+m.id,'DELETE')]]){const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=()=>run(fn);row.append(b);}list.append(row);}
+ }
+ async function run(fn){try{await fn();await load();}catch(e){toast(e.message);}}
+ el('memory-enabled').onchange=()=>run(()=>req('','PUT',{enabled:el('memory-enabled').checked}));
+ el('memory-add').onclick=()=>run(async()=>{await req('','POST',{content:el('memory-new').value});el('memory-new').value='';});
+ el('memory-clear').onclick=()=>{if(confirm('Delete all saved memories?'))run(()=>req('','DELETE'));};
+ const page=el('settings-page'); new MutationObserver(()=>{if(!page.hidden)load().catch(e=>toast(e.message));}).observe(page,{attributes:true,attributeFilter:['hidden']});
+})();
+
+// KNOWLEDGE_BASE_V1
+async function refreshKnowledgeBase(){
+ const panel=document.getElementById('kb-status');
+ try{
+  const rows=await api('/api/knowledge-base');
+  panel.replaceChildren();
+  const summary=document.createElement('p');
+  summary.textContent=`Documents: ${rows.length} | Indexed: ${rows.filter(d=>d.indexed).length} | Chunks: ${rows.reduce((n,d)=>n+d.chunks,0)}`;
+  panel.append(summary);
+  for(const d of rows){
+   const row=document.createElement('div');row.className='doc-row';
+   const label=document.createElement('span');label.textContent=d.name+' — '+(d.indexed?'Indexed ('+d.chunks+' chunks)':'Pending');
+   const btn=document.createElement('button');btn.textContent='Reindex';
+   btn.onclick=async()=>{btn.disabled=true;try{await api('/api/knowledge-base/'+d.id+'/reindex',{method:'POST'});await refreshKnowledgeBase();toast('Document indexed')}catch(e){toast(e.message)}finally{btn.disabled=false}};
+   row.append(label,btn);panel.append(row);
+  }
+ }catch(e){panel.textContent='Knowledge base status unavailable: '+e.message;}
+}
+document.getElementById('kb-refresh').onclick=refreshKnowledgeBase;
+
+// GITHUB_UI_V1
+(function(){
+ const el=$; let activeRepo='', working=false, epoch=0;
+ const status=t=>el('gh-status').textContent=t;
+ function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
+ function clear(){activeRepo='';el('gh-summary').replaceChildren();el('gh-analysis').replaceChildren();el('gh-files').replaceChildren();el('gh-file-title').textContent='Source code';el('gh-code').textContent='Select a file to view its content.';}
+ async function run(fn){if(working)return;working=true;const version=epoch;const controls=[...el('github-page').querySelectorAll('button,input,select')];controls.forEach(b=>b.disabled=true);status('Loading from GitHub…');try{await fn(version);}catch(e){if(version===epoch)status(e.message);}finally{working=false;controls.forEach(b=>b.disabled=false);}}
+ const req=(route,params)=>api('/api/github/'+route+'?'+new URLSearchParams(params));
+ function repo(){const r=el('gh-repo').value.trim();if(!r)throw Error('Enter a repository URL');return r;}
+ function stats(d){const r=d.repository||{};const root=el('gh-summary');root.replaceChildren();for(const [label,value] of [['Repository',r.full_name],['Files',d.total_files],['Folders',d.total_folders],['Language',r.language||'Unknown'],['Stars',r.stars],['Size (KB)',Math.round((d.total_bytes||0)/1024)]]){const card=node('div',undefined,'gh-stat');card.append(node('small',label),node('strong',String(value??'—')));root.append(card);} }
+ function files(rows){const root=el('gh-files');root.replaceChildren();if(!rows.length)root.append(node('p','No matching files.'));for(const f of rows){const b=node('button',f.path+(f.line?' : '+f.line:''),'gh-file');b.type='button';if(f.reason)b.title=f.reason;if(f.category)b.append(node('small',f.category,'gh-tag'));if(f.content)b.append(node('small',f.content,'gh-snippet'));b.onclick=()=>{if(f.type==='folder'){el('gh-query').value=f.path;el('gh-mode').value='filename';el('gh-search-form').requestSubmit();return;}run(async v=>{const d=await req('file',{repository:activeRepo,path:f.path});if(v!==epoch)return;el('gh-file-title').textContent=d.path;const code=node('code',d.content);el('gh-code').replaceChildren(code);status('File loaded · '+(d.lines??d.content.split('\n').length)+' lines');});};root.append(b);} }
+ function analysis(d){const root=el('gh-analysis');root.replaceChildren();const cards=node('div',undefined,'gh-summary');const bar=node('div',undefined,'gh-bar');for(const [key,label] of [['useful','Useful'],['review','Needs review'],['unnecessary','Possibly unnecessary']]){const x=d.categories?.[key]||{};const pct=Math.max(0,Math.min(100,Number(x.file_percentage)||0));const card=node('div',undefined,'gh-stat gh-'+key);card.append(node('small',label),node('strong',pct+'%'),node('small',(x.files||0)+' files · '+(x.size_percentage||0)+'% of bytes'));cards.append(card);const seg=node('span',undefined,'gh-'+key);seg.style.width=pct+'%';bar.append(seg);}root.append(cards,bar,node('p','Duplicate groups: '+(d.duplicate_group_count||0)+' · Classification is heuristic; review before deleting.'));for(const g of (d.duplicate_groups||[]).slice(0,20)){const details=node('details');details.append(node('summary','Duplicate group · '+g.count+' files'));for(const p of g.files||[])details.append(node('div',typeof p==='string'?p:p.path));root.append(details);}const ext=node('details');ext.append(node('summary','File types'));for(const [k,v] of Object.entries(d.extensions||{}))ext.append(node('div',k+': '+(typeof v==='object'?JSON.stringify(v):v)));root.append(ext);}
+ function load(analyze){run(async v=>{const r=repo();clear();const d=await req(analyze?'analyze':'repository',{repository:r});if(v!==epoch)return;activeRepo=r;stats(d);files(d.files||[]);if(analyze)analysis(d);status((d.truncated?'Partial repository listing · ':'')+(d.total_files||0)+' files loaded');});}
+ el('github-tab').onclick=()=>showPage('github');el('gh-open-form').onsubmit=e=>{e.preventDefault();load(false);};el('gh-analyze').onclick=()=>load(true);
+ el('gh-search-form').onsubmit=e=>{e.preventDefault();run(async v=>{if(!activeRepo||repo()!==activeRepo)throw Error('Open the repository first');const d=await req('search',{repository:activeRepo,query:el('gh-query').value.trim(),mode:el('gh-mode').value});if(v!==epoch)return;files(d.results||[]);status(d.total_results+' matches'+(d.limited?' · Search limit reached':'')+(d.truncated?' · Partial repository':''));});};
+ el('logout').addEventListener('click',()=>{epoch++;clear();el('gh-repo').value='';el('gh-query').value='';status('Enter a repository URL to begin.');});
+ const go=()=>{if(busy){toast('Stop the current response first');return;}newChat().catch(e=>toast(e.message));};
+ for(const n of document.querySelectorAll('.sidebar .brand, header .search-ai-brand-logo, header #page-title')){n.classList.add('gh-brand-link');n.tabIndex=0;n.setAttribute('role','button');n.title='Start a new chat';n.addEventListener('click',go);n.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();go();}});}
 })();
